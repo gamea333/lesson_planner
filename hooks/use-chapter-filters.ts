@@ -1,87 +1,141 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-interface ChapterOption {
+export interface ChapterOption {
   id: number;
   grade: string;
   subject: string;
   chapter: string;
+  metadataComplete?: boolean;
 }
 
+/**
+ * Chapter picker for Create / Practice / Homework.
+ * Chapters from the knowledge base are always listed (even without Grade/Subject).
+ * Grade/Subject act as optional filters, not gates.
+ */
 export function useChapterFilters() {
   const [grades, setGrades] = useState<string[]>([]);
   const [subjects, setSubjects] = useState<string[]>([]);
-  const [chapters, setChapters] = useState<ChapterOption[]>([]);
+  const [allChapters, setAllChapters] = useState<ChapterOption[]>([]);
+  const [totalEntries, setTotalEntries] = useState(0);
+  const [incompleteCount, setIncompleteCount] = useState(0);
   const [selectedGrade, setSelectedGrade] = useState("");
   const [selectedSubject, setSelectedSubject] = useState("");
-  const [selectedChapterId, setSelectedChapterId] = useState<number | null>(null);
+  const [selectedChapterId, setSelectedChapterId] = useState<number | null>(
+    null
+  );
   const skipCascadeRef = useRef(false);
 
-  const loadFilters = useCallback(async (grade?: string, subject?: string) => {
-    const params = new URLSearchParams({ filters: "true" });
-    if (grade) params.set("grade", grade);
-    if (subject) params.set("subject", subject);
-
-    const res = await fetch(`/api/knowledge-base?${params}`);
+  const loadCatalog = useCallback(async () => {
+    const res = await fetch("/api/knowledge-base?filters=true");
     const data = await res.json();
     setGrades(data.grades ?? []);
     setSubjects(data.subjects ?? []);
-    setChapters(data.chapters ?? []);
+    setAllChapters(data.chapters ?? []);
+    setTotalEntries(Number(data.totalEntries) || 0);
+    setIncompleteCount(Number(data.incompleteCount) || 0);
   }, []);
 
   useEffect(() => {
-    loadFilters();
-  }, [loadFilters]);
+    loadCatalog();
+  }, [loadCatalog]);
+
+  /** Subjects available for the selected grade (or all if no grade). */
+  const subjectsForGrade = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of allChapters) {
+      if (!selectedGrade || c.grade === selectedGrade) set.add(c.subject);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [allChapters, selectedGrade]);
+
+  /** Chapters visible given optional grade/subject filters. */
+  const chapters = useMemo(() => {
+    return allChapters.filter((c) => {
+      if (selectedGrade && c.grade !== selectedGrade) return false;
+      if (selectedSubject && c.subject !== selectedSubject) return false;
+      return true;
+    });
+  }, [allChapters, selectedGrade, selectedSubject]);
 
   useEffect(() => {
-    if (!selectedGrade) return;
     if (skipCascadeRef.current) return;
-    loadFilters(selectedGrade);
-    setSelectedSubject("");
-    setSelectedChapterId(null);
-  }, [selectedGrade, loadFilters]);
+    if (selectedSubject && !subjectsForGrade.includes(selectedSubject)) {
+      setSelectedSubject("");
+    }
+  }, [selectedGrade, subjectsForGrade, selectedSubject]);
 
   useEffect(() => {
-    if (!selectedGrade || !selectedSubject) return;
     if (skipCascadeRef.current) return;
-    loadFilters(selectedGrade, selectedSubject);
-    setSelectedChapterId(null);
-  }, [selectedGrade, selectedSubject, loadFilters]);
+    if (
+      selectedChapterId != null &&
+      !chapters.some((c) => c.id === selectedChapterId)
+    ) {
+      setSelectedChapterId(null);
+    }
+  }, [chapters, selectedChapterId]);
 
-  /** Set grade/subject/chapter together without cascade clears (e.g. from lesson plan). */
+  const selectChapter = useCallback(
+    (id: number | null) => {
+      setSelectedChapterId(id);
+      if (id == null) return;
+      const match = allChapters.find((c) => c.id === id);
+      if (!match) return;
+      // Fill grade/subject from the chapter so filters stay consistent
+      skipCascadeRef.current = true;
+      setSelectedGrade(match.grade);
+      setSelectedSubject(match.subject);
+      setTimeout(() => {
+        skipCascadeRef.current = false;
+      }, 0);
+    },
+    [allChapters]
+  );
+
   const hydrateSelection = useCallback(
     async (grade: string, subject: string, chapterId: number) => {
       skipCascadeRef.current = true;
       try {
-        await loadFilters(grade || undefined, subject || undefined);
-        setSelectedGrade(grade);
-        setSelectedSubject(subject);
+        if (allChapters.length === 0) await loadCatalog();
+        setSelectedGrade(grade || "Unspecified");
+        setSelectedSubject(subject || "Unspecified");
         setSelectedChapterId(chapterId);
       } finally {
-        // Keep cascade suppressed until after React applies state + effects
         setTimeout(() => {
           skipCascadeRef.current = false;
         }, 0);
       }
     },
-    [loadFilters]
+    [allChapters.length, loadCatalog]
   );
 
-  const selectedChapter = chapters.find((c) => c.id === selectedChapterId);
+  const selectedChapter =
+    allChapters.find((c) => c.id === selectedChapterId) ??
+    chapters.find((c) => c.id === selectedChapterId);
 
   return {
     grades,
-    subjects,
+    subjects: selectedGrade ? subjectsForGrade : subjects,
     chapters,
+    allChapters,
+    totalEntries,
+    incompleteCount,
     selectedGrade,
-    setSelectedGrade,
+    setSelectedGrade: (g: string) => {
+      setSelectedGrade(g);
+      setSelectedSubject("");
+      // Keep chapter if it still matches; clearing subject may widen list
+    },
     selectedSubject,
     setSelectedSubject,
     selectedChapterId,
-    setSelectedChapterId,
+    setSelectedChapterId: selectChapter,
     selectedChapter,
     hydrateSelection,
-    isEmpty: grades.length === 0,
+    reload: loadCatalog,
+    isEmpty: totalEntries === 0,
+    needsMetadata: incompleteCount > 0,
   };
 }

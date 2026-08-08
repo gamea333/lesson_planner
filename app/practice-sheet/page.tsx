@@ -51,6 +51,9 @@ export default function PracticeSheetPage() {
     setSelectedChapterId,
     selectedChapter,
     isEmpty,
+    allChapters,
+    incompleteCount,
+    totalEntries,
   } = useChapterFilters();
 
   const [questionCount, setQuestionCount] = useState<5 | 10 | 15 | 20>(10);
@@ -190,41 +193,18 @@ export default function PracticeSheetPage() {
               <Card>
                 <CardHeader>
                   <CardTitle>Select chapter</CardTitle>
-                  <CardDescription>Grade → Subject → Chapter</CardDescription>
+                  <CardDescription>
+                    Pick any stored chapter immediately — Grade / Subject filters
+                    are optional.
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-4">
-                  <div className="space-y-2">
-                    <Label>Grade</Label>
-                    <select
-                      value={selectedGrade}
-                      onChange={(e) => setSelectedGrade(e.target.value)}
-                      className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
-                      disabled={isLoading}
-                    >
-                      <option value="">Select grade…</option>
-                      {grades.map((g) => (
-                        <option key={g} value={g}>
-                          {g}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Subject</Label>
-                    <select
-                      value={selectedSubject}
-                      onChange={(e) => setSelectedSubject(e.target.value)}
-                      className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
-                      disabled={!selectedGrade || isLoading}
-                    >
-                      <option value="">Select subject…</option>
-                      {subjects.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {incompleteCount > 0 && (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      {incompleteCount} of {totalEntries} chapter(s) still need
+                      metadata in Knowledge Base. They still appear in the list.
+                    </p>
+                  )}
                   <div className="space-y-2">
                     <Label>Chapter</Label>
                     <select
@@ -233,19 +213,60 @@ export default function PracticeSheetPage() {
                         setSelectedChapterId(Number(e.target.value) || null)
                       }
                       className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
-                      disabled={!selectedSubject || isLoading}
+                      disabled={isLoading}
                     >
                       <option value="">Select chapter…</option>
-                      {chapters.map((c) => (
+                      {(selectedGrade || selectedSubject
+                        ? chapters
+                        : allChapters
+                      ).map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.chapter}
+                          {c.grade === "Unspecified"
+                            ? " (metadata not set)"
+                            : ` · ${c.grade} · ${c.subject}`}
                         </option>
                       ))}
                     </select>
                   </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Filter by grade (optional)</Label>
+                      <select
+                        value={selectedGrade}
+                        onChange={(e) => setSelectedGrade(e.target.value)}
+                        className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
+                        disabled={isLoading}
+                      >
+                        <option value="">All grades</option>
+                        {grades.map((g) => (
+                          <option key={g} value={g}>
+                            {g}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Filter by subject (optional)</Label>
+                      <select
+                        value={selectedSubject}
+                        onChange={(e) => setSelectedSubject(e.target.value)}
+                        className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
+                        disabled={isLoading}
+                      >
+                        <option value="">All subjects</option>
+                        {subjects.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                   {selectedChapter && (
                     <p className="rounded-lg bg-accent/40 px-3 py-2 text-xs text-muted-foreground">
-                      Using stored data for <strong>{selectedChapter.chapter}</strong>
+                      Using stored data for{" "}
+                      <strong>{selectedChapter.chapter}</strong>
                     </p>
                   )}
                 </CardContent>

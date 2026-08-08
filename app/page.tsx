@@ -3,7 +3,7 @@
 import { Loader2, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { GeneratingOverlay } from "@/components/generating-overlay";
@@ -16,15 +16,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { useChapterFilters } from "@/hooks/use-chapter-filters";
 import { useGenerateAction } from "@/hooks/use-generate-action";
 import type { CustomizationOptions } from "@/lib/types/knowledge-base";
-
-interface ChapterOption {
-  id: number;
-  grade: string;
-  subject: string;
-  chapter: string;
-}
 
 const DEFAULT_CUSTOMIZATION: CustomizationOptions = {
   shortenWarmUp: false,
@@ -34,59 +28,57 @@ const DEFAULT_CUSTOMIZATION: CustomizationOptions = {
   customText: "",
 };
 
+function chapterLabel(c: {
+  chapter: string;
+  grade: string;
+  subject: string;
+  metadataComplete?: boolean;
+}) {
+  const meta =
+    c.grade === "Unspecified" && c.subject === "Unspecified"
+      ? "metadata not set yet"
+      : `${c.grade} · ${c.subject}`;
+  return `${c.chapter} (${meta})`;
+}
+
 export default function HomePage() {
   const router = useRouter();
   const generateGuardRef = useRef(false);
 
-  const [grades, setGrades] = useState<string[]>([]);
-  const [subjects, setSubjects] = useState<string[]>([]);
-  const [chapters, setChapters] = useState<ChapterOption[]>([]);
-  const [selectedGrade, setSelectedGrade] = useState("");
-  const [selectedSubject, setSelectedSubject] = useState("");
-  const [selectedChapterId, setSelectedChapterId] = useState<number | null>(null);
+  const {
+    grades,
+    subjects,
+    chapters,
+    allChapters,
+    totalEntries,
+    incompleteCount,
+    selectedGrade,
+    setSelectedGrade,
+    selectedSubject,
+    setSelectedSubject,
+    selectedChapterId,
+    setSelectedChapterId,
+    selectedChapter,
+    isEmpty,
+  } = useChapterFilters();
+
   const [numberOfDays, setNumberOfDays] = useState("1");
-  const [customization, setCustomization] = useState<CustomizationOptions>(DEFAULT_CUSTOMIZATION);
+  const [customization, setCustomization] =
+    useState<CustomizationOptions>(DEFAULT_CUSTOMIZATION);
 
-  const { invokeGenerate, isLoading: isGenerating, isDisabled: generateDisabled, waitLabel } =
-    useGenerateAction({ action: "generate" });
+  const {
+    invokeGenerate,
+    isLoading: isGenerating,
+    isDisabled: generateDisabled,
+    waitLabel,
+  } = useGenerateAction({ action: "generate" });
 
-  const loadFilters = useCallback(async (grade?: string, subject?: string) => {
-    const params = new URLSearchParams({ filters: "true" });
-    if (grade) params.set("grade", grade);
-    if (subject) params.set("subject", subject);
-
-    const res = await fetch(`/api/knowledge-base?${params}`);
-    const data = await res.json();
-    setGrades(data.grades ?? []);
-    setSubjects(data.subjects ?? []);
-    setChapters(data.chapters ?? []);
-  }, []);
-
-  useEffect(() => {
-    loadFilters();
-  }, [loadFilters]);
-
-  useEffect(() => {
-    if (selectedGrade) {
-      loadFilters(selectedGrade);
-      setSelectedSubject("");
-      setSelectedChapterId(null);
-    }
-  }, [selectedGrade, loadFilters]);
-
-  useEffect(() => {
-    if (selectedGrade && selectedSubject) {
-      loadFilters(selectedGrade, selectedSubject);
-      setSelectedChapterId(null);
-    }
-  }, [selectedGrade, selectedSubject, loadFilters]);
-
-  const selectedChapter = chapters.find((c) => c.id === selectedChapterId);
   const canGenerate =
     Boolean(selectedChapterId) && !isGenerating && !generateDisabled;
 
   async function handleGenerate() {
-    if (!selectedChapterId || generateGuardRef.current || generateDisabled) return;
+    if (!selectedChapterId || generateGuardRef.current || generateDisabled)
+      return;
 
     generateGuardRef.current = true;
 
@@ -124,14 +116,17 @@ export default function HomePage() {
       router.push("/generate");
     } catch (err) {
       toast.error("Generation failed", {
-        description: err instanceof Error ? err.message : "Something went wrong",
+        description:
+          err instanceof Error ? err.message : "Something went wrong",
       });
     } finally {
       generateGuardRef.current = false;
     }
   }
 
-  function toggleCustomization(key: keyof Omit<CustomizationOptions, "customText">) {
+  function toggleCustomization(
+    key: keyof Omit<CustomizationOptions, "customText">
+  ) {
     setCustomization((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
@@ -159,12 +154,13 @@ export default function HomePage() {
             </p>
           </header>
 
-          {grades.length === 0 ? (
+          {isEmpty ? (
             <Card className="text-center">
               <CardHeader>
                 <CardTitle>Knowledge base is empty</CardTitle>
                 <CardDescription>
-                  Upload chapter lesson plan PDFs first, then come back to generate.
+                  Upload chapter lesson plan PDFs first, then come back to
+                  generate.
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -179,65 +175,90 @@ export default function HomePage() {
                 <CardHeader>
                   <CardTitle>Select chapter</CardTitle>
                   <CardDescription>
-                    Choose Grade → Subject → Chapter from your stored library
+                    Every stored chapter appears here right after upload — even
+                    before Grade / Subject are filled in. Filters below are
+                    optional.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="grid gap-4">
-                  <div className="space-y-2">
-                    <Label>Grade</Label>
-                    <select
-                      value={selectedGrade}
-                      onChange={(e) => setSelectedGrade(e.target.value)}
-                      className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
-                      disabled={isGenerating}
-                    >
-                      <option value="">Select grade…</option>
-                      {grades.map((g) => (
-                        <option key={g} value={g}>
-                          {g}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Subject</Label>
-                    <select
-                      value={selectedSubject}
-                      onChange={(e) => setSelectedSubject(e.target.value)}
-                      className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
-                      disabled={!selectedGrade || isGenerating}
-                    >
-                      <option value="">Select subject…</option>
-                      {subjects.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  {incompleteCount > 0 && (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      {incompleteCount} of {totalEntries} chapter(s) still need
+                      Grade / Subject / Chapter in{" "}
+                      <Link href="/knowledge-base" className="underline">
+                        Knowledge Base
+                      </Link>
+                      . You can generate now; titles may show as the PDF name.
+                    </p>
+                  )}
 
                   <div className="space-y-2">
                     <Label>Chapter</Label>
                     <select
                       value={selectedChapterId ?? ""}
-                      onChange={(e) => setSelectedChapterId(Number(e.target.value) || null)}
+                      onChange={(e) =>
+                        setSelectedChapterId(
+                          Number(e.target.value) || null
+                        )
+                      }
                       className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
-                      disabled={!selectedSubject || isGenerating}
+                      disabled={isGenerating}
                     >
                       <option value="">Select chapter…</option>
-                      {chapters.map((c) => (
+                      {(selectedGrade || selectedSubject
+                        ? chapters
+                        : allChapters
+                      ).map((c) => (
                         <option key={c.id} value={c.id}>
-                          {c.chapter}
+                          {chapterLabel(c)}
                         </option>
                       ))}
                     </select>
                   </div>
 
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Filter by grade (optional)</Label>
+                      <select
+                        value={selectedGrade}
+                        onChange={(e) => setSelectedGrade(e.target.value)}
+                        className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
+                        disabled={isGenerating}
+                      >
+                        <option value="">All grades</option>
+                        {grades.map((g) => (
+                          <option key={g} value={g}>
+                            {g}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Filter by subject (optional)</Label>
+                      <select
+                        value={selectedSubject}
+                        onChange={(e) => setSelectedSubject(e.target.value)}
+                        className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
+                        disabled={isGenerating}
+                      >
+                        <option value="">All subjects</option>
+                        {subjects.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
                   {selectedChapter && (
                     <p className="rounded-lg bg-accent/40 px-3 py-2 text-xs text-muted-foreground">
-                      Using stored data for <strong>{selectedChapter.chapter}</strong> — pulled
-                      from knowledge base, not a fresh upload.
+                      Using stored data for{" "}
+                      <strong>{selectedChapter.chapter}</strong>
+                      {selectedChapter.metadataComplete === false
+                        ? " — tip: add Grade/Subject in Knowledge Base when you can."
+                        : " — pulled from knowledge base, not a fresh upload."}
                     </p>
                   )}
 
@@ -250,58 +271,48 @@ export default function HomePage() {
                       className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
                       disabled={isGenerating}
                     >
-                      <option value="1">1 day</option>
-                      <option value="2">2 days</option>
-                      <option value="3">3 days</option>
-                      <option value="4">4 days</option>
+                      {[1, 2, 3, 4].map((d) => (
+                        <option key={d} value={String(d)}>
+                          {d} {d === 1 ? "day" : "days"}
+                        </option>
+                      ))}
                     </select>
-                    {Number(numberOfDays) > 1 && (
-                      <p className="text-xs text-muted-foreground">
-                        Content will be split progressively across {numberOfDays} days
-                        (Day 1 full warm-up; later days use a short recap).
-                      </p>
-                    )}
                   </div>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Customize this lesson plan</CardTitle>
-                  <CardDescription>
-                    Optional adjustments — applied on top of the source chapter&apos;s style
-                  </CardDescription>
+                  <CardTitle>Customize (optional)</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {(
-                      [
-                        ["shortenWarmUp", "Shorten Warm-Up"],
-                        ["extraPractice", "Add Extra Practice Questions"],
-                        ["simplifyLanguage", "Simplify Language"],
-                        ["realWorldExamples", "Include More Real-World Examples"],
-                      ] as const
-                    ).map(([key, label]) => (
-                      <label
-                        key={key}
-                        className="flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-accent/30"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={customization[key]}
-                          onChange={() => toggleCustomization(key)}
-                          disabled={isGenerating}
-                          className="h-4 w-4 rounded border-input accent-primary"
-                        />
-                        {label}
-                      </label>
-                    ))}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="customText">Additional instructions</Label>
+                <CardContent className="space-y-3">
+                  {(
+                    [
+                      ["shortenWarmUp", "Shorten warm-up"],
+                      ["extraPractice", "Add extra practice"],
+                      ["simplifyLanguage", "Simplify language"],
+                      ["realWorldExamples", "Add real-world examples"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label
+                      key={key}
+                      className="flex cursor-pointer items-center gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={customization[key]}
+                        onChange={() => toggleCustomization(key)}
+                        disabled={isGenerating}
+                        className="h-4 w-4 accent-primary"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                  <div className="space-y-1.5 pt-1">
+                    <Label htmlFor="custom">Extra notes</Label>
                     <textarea
-                      id="customText"
+                      id="custom"
+                      rows={2}
                       value={customization.customText}
                       onChange={(e) =>
                         setCustomization((prev) => ({
@@ -309,10 +320,9 @@ export default function HomePage() {
                           customText: e.target.value,
                         }))
                       }
-                      placeholder='e.g. "focus more on real-life examples," "add extra practice questions"'
-                      rows={3}
                       disabled={isGenerating}
-                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      placeholder="Anything else for this lesson…"
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     />
                   </div>
                 </CardContent>
@@ -325,15 +335,9 @@ export default function HomePage() {
                 onClick={handleGenerate}
               >
                 {isGenerating ? (
-                  <>
-                    <Loader2 className="animate-spin" />
-                    {waitLabel ?? "Generating…"}
-                  </>
-                ) : waitLabel ? (
-                  waitLabel
-                ) : (
-                  "Generate Lesson Plan"
-                )}
+                  <Loader2 className="animate-spin" />
+                ) : null}
+                {waitLabel ?? "Generate lesson plan"}
               </Button>
             </div>
           )}

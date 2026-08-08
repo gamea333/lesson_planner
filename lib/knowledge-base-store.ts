@@ -79,7 +79,8 @@ async function readBlobsDb(): Promise<KnowledgeBaseFile | null> {
     const { getStore } = await import("@netlify/blobs");
     const store = getStore(BLOB_STORE_NAME);
     const data = await store.get(BLOB_KEY, { type: "json" });
-    if (!data) return emptyDb();
+    // Missing key → null so we can fall back to filesystem (do NOT treat as empty DB)
+    if (!data) return null;
     return data as KnowledgeBaseFile;
   } catch (err) {
     console.warn(
@@ -106,19 +107,54 @@ async function writeBlobsDb(data: KnowledgeBaseFile): Promise<boolean> {
 }
 
 async function readDb(): Promise<KnowledgeBaseFile> {
+  let blobsData: KnowledgeBaseFile | null = null;
   if (preferNetlifyBlobs()) {
-    const fromBlobs = await readBlobsDb();
-    if (fromBlobs) return fromBlobs;
+    blobsData = await readBlobsDb();
   }
-  return readFsDb();
+
+  let fsData: KnowledgeBaseFile = emptyDb();
+  try {
+    fsData = readFsDb();
+  } catch (err) {
+    console.warn(
+      "[KnowledgeBase] Filesystem read failed:",
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  // Prefer the copy that actually has chapters (avoids Blobs empty vs /tmp split-brain)
+  const blobsCount = blobsData?.entries?.length ?? 0;
+  const fsCount = fsData.entries?.length ?? 0;
+
+  if (blobsCount > 0 && blobsCount >= fsCount) {
+    return blobsData!;
+  }
+  if (fsCount > 0) {
+    // Heal Blobs from filesystem if Blobs was empty/missing
+    if (preferNetlifyBlobs() && blobsCount === 0) {
+      await writeBlobsDb(fsData);
+    }
+    return fsData;
+  }
+
+  return blobsData ?? emptyDb();
 }
 
 async function writeDb(data: KnowledgeBaseFile): Promise<void> {
+  // Write both targets when possible so list/create always see the same data
   if (preferNetlifyBlobs()) {
-    const ok = await writeBlobsDb(data);
-    if (ok) return;
+    await writeBlobsDb(data);
   }
-  writeFsDb(data);
+  try {
+    writeFsDb(data);
+  } catch (err) {
+    // On Netlify, /tmp write can still fail in edge cases — Blobs is primary there
+    if (!preferNetlifyBlobs()) throw err;
+    console.warn(
+      "[KnowledgeBase] Filesystem write skipped:",
+      err instanceof Error ? err.message : err
+    );
+  }
 }
 
 function sortAlpha(values: string[]): string[] {
@@ -180,12 +216,15 @@ export async function createKnowledgeBaseEntry(input: {
   const data = await readDb();
   const now = new Date().toISOString();
 
-  const existingIndex = data.entries.findIndex(
-    (e) =>
-      e.grade === input.grade &&
-      e.subject === input.subject &&
-      e.chapter === input.chapter
-  );
+  const existingIndex =
+    input.grade.trim() && input.subject.trim() && input.chapter.trim()
+      ? data.entries.findIndex(
+          (e) =>
+            e.grade === input.grade &&
+            e.subject === input.subject &&
+            e.chapter === input.chapter
+        )
+      : -1;
 
   if (existingIndex >= 0) {
     const updated: KnowledgeBaseEntry = {
@@ -267,26 +306,45 @@ export async function getKnowledgeBaseFilters(
   grade?: string,
   subject?: string
 ): Promise<KnowledgeBaseFilters> {
-  const entries = (await listKnowledgeBaseEntries()).filter(
-    (e) => e.grade && e.subject && e.chapter
-  );
-  const grades = sortAlpha(entries.map((e) => e.grade));
+  const all = await listKnowledgeBaseEntries();
+  const incompleteCount = all.filter(
+    (e) => !(e.grade && e.subject && e.chapter)
+  ).length;
+
+  // Include incomplete uploads so Create/Practice/Homework are not blank
+  const normalized = all.map((e) => {
+    const g = e.grade?.trim() || "Unspecified";
+    const s = e.subject?.trim() || "Unspecified";
+    const c =
+      e.chapter?.trim() ||
+      e.filename.replace(/\.pdf$/i, "").trim() ||
+      `Chapter ${e.id}`;
+    return {
+      id: e.id,
+      grade: g,
+      subject: s,
+      chapter: c,
+      metadataComplete: Boolean(e.grade?.trim() && e.subject?.trim() && e.chapter?.trim()),
+    };
+  });
+
+  const grades = sortAlpha(normalized.map((e) => e.grade));
   const subjects = sortAlpha(
-    entries
+    normalized
       .filter((e) => !grade || e.grade === grade)
       .map((e) => e.subject)
   );
-  const chapters = entries
+  const chapters = normalized
     .filter(
       (e) => (!grade || e.grade === grade) && (!subject || e.subject === subject)
     )
-    .map((e) => ({
-      id: e.id,
-      grade: e.grade,
-      subject: e.subject,
-      chapter: e.chapter,
-    }))
     .sort((a, b) => a.chapter.localeCompare(b.chapter));
 
-  return { grades, subjects, chapters };
+  return {
+    grades,
+    subjects,
+    chapters,
+    totalEntries: all.length,
+    incompleteCount,
+  };
 }

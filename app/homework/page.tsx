@@ -51,6 +51,9 @@ function HomeworkCreatorInner() {
     selectedChapter,
     hydrateSelection,
     isEmpty,
+    allChapters,
+    incompleteCount,
+    totalEntries,
   } = useChapterFilters();
 
   const [numberOfDays, setNumberOfDays] = useState(1);
@@ -252,15 +255,46 @@ function HomeworkCreatorInner() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-5">
-              <div className="grid gap-3 sm:grid-cols-3">
+              {incompleteCount > 0 && (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  {incompleteCount} of {totalEntries} chapter(s) still need
+                  metadata — they still appear in the chapter list below.
+                </p>
+              )}
+              <div className="space-y-1.5">
+                <Label>Chapter</Label>
+                <select
+                  value={selectedChapterId ?? ""}
+                  onChange={(e) =>
+                    setSelectedChapterId(
+                      e.target.value ? Number(e.target.value) : null
+                    )
+                  }
+                  className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
+                >
+                  <option value="">Select chapter</option>
+                  {(selectedGrade || selectedSubject
+                    ? chapters
+                    : allChapters
+                  ).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.chapter}
+                      {c.grade === "Unspecified"
+                        ? " (metadata not set)"
+                        : ` · ${c.grade} · ${c.subject}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label>Grade</Label>
+                  <Label>Filter by grade (optional)</Label>
                   <select
                     value={selectedGrade}
                     onChange={(e) => setSelectedGrade(e.target.value)}
                     className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
                   >
-                    <option value="">Select grade</option>
+                    <option value="">All grades</option>
                     {grades.map((g) => (
                       <option key={g} value={g}>
                         {g}
@@ -269,37 +303,16 @@ function HomeworkCreatorInner() {
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Subject</Label>
+                  <Label>Filter by subject (optional)</Label>
                   <select
                     value={selectedSubject}
                     onChange={(e) => setSelectedSubject(e.target.value)}
-                    disabled={!selectedGrade}
-                    className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm disabled:opacity-50"
+                    className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm"
                   >
-                    <option value="">Select subject</option>
+                    <option value="">All subjects</option>
                     {subjects.map((s) => (
                       <option key={s} value={s}>
                         {s}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Chapter</Label>
-                  <select
-                    value={selectedChapterId ?? ""}
-                    onChange={(e) =>
-                      setSelectedChapterId(
-                        e.target.value ? Number(e.target.value) : null
-                      )
-                    }
-                    disabled={!selectedSubject}
-                    className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm disabled:opacity-50"
-                  >
-                    <option value="">Select chapter</option>
-                    {chapters.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.chapter}
                       </option>
                     ))}
                   </select>

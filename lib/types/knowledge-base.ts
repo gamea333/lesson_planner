@@ -116,7 +116,12 @@ export interface KnowledgeBaseFilters {
     grade: string;
     subject: string;
     chapter: string;
+    metadataComplete?: boolean;
   }>;
+  /** Total stored chapters (including incomplete metadata) */
+  totalEntries: number;
+  /** Chapters missing grade, subject, or chapter title */
+  incompleteCount: number;
 }
 
 export function emptyGroundedStructure(): GroundedLessonStructure {
