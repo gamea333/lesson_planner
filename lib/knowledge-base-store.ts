@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 
 import type {
@@ -7,34 +8,117 @@ import type {
   KnowledgeBaseFilters,
 } from "@/lib/types/knowledge-base";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_FILE = path.join(DATA_DIR, "knowledgebase.json");
+const BLOB_STORE_NAME = "lessonplanner-kb";
+const BLOB_KEY = "knowledgebase";
 
 interface KnowledgeBaseFile {
   entries: KnowledgeBaseEntry[];
   nextId: number;
 }
 
-function ensureDataFile(): KnowledgeBaseFile {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
+function emptyDb(): KnowledgeBaseFile {
+  return { entries: [], nextId: 1 };
+}
 
-  if (!fs.existsSync(DB_FILE)) {
-    const initial: KnowledgeBaseFile = { entries: [], nextId: 1 };
-    fs.writeFileSync(DB_FILE, JSON.stringify(initial, null, 2), "utf-8");
+/** Netlify / Lambda / Vercel cannot write under process.cwd() — only /tmp. */
+function isServerless(): boolean {
+  return Boolean(
+    process.env.NETLIFY ||
+      process.env.NETLIFY_BLOBS_CONTEXT ||
+      process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.LAMBDA_TASK_ROOT ||
+      process.env.VERCEL
+  );
+}
+
+function preferNetlifyBlobs(): boolean {
+  return Boolean(
+    process.env.NETLIFY ||
+      process.env.NETLIFY_BLOBS_CONTEXT ||
+      process.env.BLOBS_CONTEXT
+  );
+}
+
+function getFsDataDir(): string {
+  if (isServerless()) {
+    return path.join(os.tmpdir(), "lessonplanner-data");
+  }
+  return path.join(process.cwd(), "data");
+}
+
+function getFsDbFile(): string {
+  return path.join(getFsDataDir(), "knowledgebase.json");
+}
+
+function readFsDb(): KnowledgeBaseFile {
+  const dir = getFsDataDir();
+  const file = getFsDbFile();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  if (!fs.existsSync(file)) {
+    const initial = emptyDb();
+    fs.writeFileSync(file, JSON.stringify(initial, null, 2), "utf-8");
     return initial;
   }
-
-  const raw = fs.readFileSync(DB_FILE, "utf-8");
+  const raw = fs.readFileSync(file, "utf-8");
   return JSON.parse(raw) as KnowledgeBaseFile;
 }
 
-function writeData(data: KnowledgeBaseFile): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+function writeFsDb(data: KnowledgeBaseFile): void {
+  const dir = getFsDataDir();
+  const file = getFsDbFile();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
   }
-  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf-8");
+  fs.writeFileSync(file, JSON.stringify(data, null, 2), "utf-8");
+}
+
+async function readBlobsDb(): Promise<KnowledgeBaseFile | null> {
+  try {
+    const { getStore } = await import("@netlify/blobs");
+    const store = getStore(BLOB_STORE_NAME);
+    const data = await store.get(BLOB_KEY, { type: "json" });
+    if (!data) return emptyDb();
+    return data as KnowledgeBaseFile;
+  } catch (err) {
+    console.warn(
+      "[KnowledgeBase] Netlify Blobs unavailable, falling back to filesystem:",
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
+}
+
+async function writeBlobsDb(data: KnowledgeBaseFile): Promise<boolean> {
+  try {
+    const { getStore } = await import("@netlify/blobs");
+    const store = getStore(BLOB_STORE_NAME);
+    await store.setJSON(BLOB_KEY, data);
+    return true;
+  } catch (err) {
+    console.warn(
+      "[KnowledgeBase] Netlify Blobs write failed, falling back to filesystem:",
+      err instanceof Error ? err.message : err
+    );
+    return false;
+  }
+}
+
+async function readDb(): Promise<KnowledgeBaseFile> {
+  if (preferNetlifyBlobs()) {
+    const fromBlobs = await readBlobsDb();
+    if (fromBlobs) return fromBlobs;
+  }
+  return readFsDb();
+}
+
+async function writeDb(data: KnowledgeBaseFile): Promise<void> {
+  if (preferNetlifyBlobs()) {
+    const ok = await writeBlobsDb(data);
+    if (ok) return;
+  }
+  writeFsDb(data);
 }
 
 function sortAlpha(values: string[]): string[] {
@@ -43,12 +127,12 @@ function sortAlpha(values: string[]): string[] {
   );
 }
 
-export function listKnowledgeBaseEntries(filters?: {
+export async function listKnowledgeBaseEntries(filters?: {
   grade?: string;
   subject?: string;
   search?: string;
-}): KnowledgeBaseEntry[] {
-  const data = ensureDataFile();
+}): Promise<KnowledgeBaseEntry[]> {
+  const data = await readDb();
   let entries = [...data.entries];
 
   if (filters?.grade) {
@@ -71,27 +155,29 @@ export function listKnowledgeBaseEntries(filters?: {
   return entries.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 }
 
-export function getKnowledgeBaseEntry(id: number): KnowledgeBaseEntry | null {
-  const data = ensureDataFile();
+export async function getKnowledgeBaseEntry(
+  id: number
+): Promise<KnowledgeBaseEntry | null> {
+  const data = await readDb();
   return data.entries.find((e) => e.id === id) ?? null;
 }
 
-export function findKnowledgeBaseEntryByFilename(
+export async function findKnowledgeBaseEntryByFilename(
   filename: string
-): KnowledgeBaseEntry | null {
-  const data = ensureDataFile();
+): Promise<KnowledgeBaseEntry | null> {
+  const data = await readDb();
   return data.entries.find((e) => e.filename === filename) ?? null;
 }
 
-export function createKnowledgeBaseEntry(input: {
+export async function createKnowledgeBaseEntry(input: {
   grade: string;
   subject: string;
   chapter: string;
   filename: string;
   raw_text: string;
   structure_json: GroundedLessonStructure;
-}): KnowledgeBaseEntry {
-  const data = ensureDataFile();
+}): Promise<KnowledgeBaseEntry> {
+  const data = await readDb();
   const now = new Date().toISOString();
 
   const existingIndex = data.entries.findIndex(
@@ -110,7 +196,7 @@ export function createKnowledgeBaseEntry(input: {
       updated_at: now,
     };
     data.entries[existingIndex] = updated;
-    writeData(data);
+    await writeDb(data);
     return updated;
   }
 
@@ -122,11 +208,11 @@ export function createKnowledgeBaseEntry(input: {
   };
 
   data.entries.push(entry);
-  writeData(data);
+  await writeDb(data);
   return entry;
 }
 
-export function replaceKnowledgeBaseEntry(
+export async function replaceKnowledgeBaseEntry(
   id: number,
   input: {
     grade: string;
@@ -136,8 +222,8 @@ export function replaceKnowledgeBaseEntry(
     raw_text: string;
     structure_json: GroundedLessonStructure;
   }
-): KnowledgeBaseEntry | null {
-  const data = ensureDataFile();
+): Promise<KnowledgeBaseEntry | null> {
+  const data = await readDb();
   const index = data.entries.findIndex((e) => e.id === id);
   if (index < 0) return null;
 
@@ -147,15 +233,15 @@ export function replaceKnowledgeBaseEntry(
     ...input,
     updated_at: now,
   };
-  writeData(data);
+  await writeDb(data);
   return data.entries[index];
 }
 
-export function updateKnowledgeBaseEntry(
+export async function updateKnowledgeBaseEntry(
   id: number,
   patch: Partial<Pick<KnowledgeBaseEntry, "grade" | "subject" | "chapter">>
-): KnowledgeBaseEntry | null {
-  const data = ensureDataFile();
+): Promise<KnowledgeBaseEntry | null> {
+  const data = await readDb();
   const index = data.entries.findIndex((e) => e.id === id);
   if (index < 0) return null;
 
@@ -164,24 +250,24 @@ export function updateKnowledgeBaseEntry(
     ...patch,
     updated_at: new Date().toISOString(),
   };
-  writeData(data);
+  await writeDb(data);
   return data.entries[index];
 }
 
-export function deleteKnowledgeBaseEntry(id: number): boolean {
-  const data = ensureDataFile();
+export async function deleteKnowledgeBaseEntry(id: number): Promise<boolean> {
+  const data = await readDb();
   const before = data.entries.length;
   data.entries = data.entries.filter((e) => e.id !== id);
   if (data.entries.length === before) return false;
-  writeData(data);
+  await writeDb(data);
   return true;
 }
 
-export function getKnowledgeBaseFilters(
+export async function getKnowledgeBaseFilters(
   grade?: string,
   subject?: string
-): KnowledgeBaseFilters {
-  const entries = listKnowledgeBaseEntries().filter(
+): Promise<KnowledgeBaseFilters> {
+  const entries = (await listKnowledgeBaseEntries()).filter(
     (e) => e.grade && e.subject && e.chapter
   );
   const grades = sortAlpha(entries.map((e) => e.grade));
@@ -191,7 +277,9 @@ export function getKnowledgeBaseFilters(
       .map((e) => e.subject)
   );
   const chapters = entries
-    .filter((e) => (!grade || e.grade === grade) && (!subject || e.subject === subject))
+    .filter(
+      (e) => (!grade || e.grade === grade) && (!subject || e.subject === subject)
+    )
     .map((e) => ({
       id: e.id,
       grade: e.grade,

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { readResponseJson } from "@/lib/http";
 import { cn } from "@/lib/utils";
 
 interface KbListItem {
@@ -49,16 +50,23 @@ export default function KnowledgeBasePage() {
     if (search) params.set("search", search);
 
     const res = await fetch(`/api/knowledge-base?${params}`);
-    const data = await res.json();
+    const data = await readResponseJson<{ entries?: KbListItem[]; error?: string }>(
+      res
+    );
+    if (!res.ok) throw new Error(data.error || "Failed to load entries");
     setEntries(data.entries ?? []);
 
     const filterRes = await fetch("/api/knowledge-base?filters=true");
-    const filterData = await filterRes.json();
+    const filterData = await readResponseJson<{ grades?: string[]; error?: string }>(
+      filterRes
+    );
     setGrades(filterData.grades ?? []);
   }, [filterGrade, filterSubject, search]);
 
   useEffect(() => {
-    loadEntries();
+    loadEntries().catch((err) => {
+      toast.error(err instanceof Error ? err.message : "Failed to load knowledge base");
+    });
   }, [loadEntries]);
 
   const onDrop = useCallback(
@@ -76,21 +84,27 @@ export default function KnowledgeBasePage() {
           body: formData,
         });
 
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Upload failed");
-
-        const successes = (data.results ?? []).filter((r: { success?: boolean }) => r.success);
-        const failures = (data.results ?? []).filter((r: { error?: string }) => r.error);
-
-        if (successes.length) {
-          const needsReview = successes.filter((r: { needsManualEntry?: boolean }) => r.needsManualEntry);
-          toast.success(`Uploaded ${successes.length} chapter PDF(s)`);
-          for (const r of successes as Array<{
-            filename: string;
+        const data = await readResponseJson<{
+          results?: Array<{
+            success?: boolean;
+            error?: string;
+            filename?: string;
+            needsManualEntry?: boolean;
             extractionMethod?: string;
             ocrPages?: number;
             charCount?: number;
-          }>) {
+          }>;
+          error?: string;
+        }>(res);
+        if (!res.ok) throw new Error(data.error || "Upload failed");
+
+        const successes = (data.results ?? []).filter((r) => r.success);
+        const failures = (data.results ?? []).filter((r) => r.error);
+
+        if (successes.length) {
+          const needsReview = successes.filter((r) => r.needsManualEntry);
+          toast.success(`Uploaded ${successes.length} chapter PDF(s)`);
+          for (const r of successes) {
             const method = r.extractionMethod ?? "text";
             toast.message(
               `${r.filename}: extracted via ${method}` +
@@ -104,7 +118,7 @@ export default function KnowledgeBasePage() {
             );
           }
         }
-        failures.forEach((f: { filename: string; error: string }) => {
+        failures.forEach((f) => {
           toast.error(`${f.filename}: ${f.error}`);
         });
 
@@ -152,32 +166,50 @@ export default function KnowledgeBasePage() {
       body: formData,
     });
 
-    if (!res.ok) {
-      const data = await res.json();
-      toast.error(data.error || "Re-upload failed");
-      return;
+    try {
+      const data = await readResponseJson<{
+        error?: string;
+        extractionMethod?: string;
+        ocrPages?: number;
+        charCount?: number;
+      }>(res);
+      if (!res.ok) {
+        toast.error(data.error || "Re-upload failed");
+        return;
+      }
+      toast.success(
+        `Re-uploaded via ${data.extractionMethod ?? "text"}` +
+          (data.ocrPages ? ` (${data.ocrPages} OCR pages)` : "") +
+          (data.charCount != null ? ` · ${data.charCount} chars` : "")
+      );
+      loadEntries();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Re-upload failed");
     }
-    const data = await res.json();
-    toast.success(
-      `Re-uploaded via ${data.extractionMethod ?? "text"}` +
-        (data.ocrPages ? ` (${data.ocrPages} OCR pages)` : "") +
-        (data.charCount != null ? ` · ${data.charCount} chars` : "")
-    );
-    loadEntries();
   }
 
   async function viewExtractedText(id: number) {
     const res = await fetch(`/api/knowledge-base/${id}`);
-    if (!res.ok) {
-      toast.error("Could not load extracted text");
-      return;
+    try {
+      const data = await readResponseJson<{
+        error?: string;
+        chapter?: string;
+        filename?: string;
+        charCount?: number;
+        textPreview?: string;
+      }>(res);
+      if (!res.ok) {
+        toast.error(data.error || "Could not load extracted text");
+        return;
+      }
+      setPreviewId(id);
+      setPreviewMeta(
+        `${data.chapter || data.filename} · ${data.charCount ?? 0} characters stored`
+      );
+      setPreviewText(data.textPreview || "(empty)");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not load extracted text");
     }
-    const data = await res.json();
-    setPreviewId(id);
-    setPreviewMeta(
-      `${data.chapter || data.filename} · ${data.charCount ?? 0} characters stored`
-    );
-    setPreviewText(data.textPreview || "(empty)");
   }
 
   async function saveMetadata(id: number) {

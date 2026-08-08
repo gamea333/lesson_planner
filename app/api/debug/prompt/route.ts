@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const entry = getKnowledgeBaseEntry(chapterId);
+  const entry = await getKnowledgeBaseEntry(chapterId);
   if (!entry) {
     return NextResponse.json({ error: "Chapter not found" }, { status: 404 });
   }

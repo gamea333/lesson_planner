@@ -6,6 +6,7 @@ const nextConfig = {
       "pdfjs-dist",
       "tesseract.js",
       "@napi-rs/canvas",
+      "@netlify/blobs",
     ],
   },
 };

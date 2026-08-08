@@ -73,9 +73,9 @@ export async function processPdfForKnowledgeBase(
   };
 }
 
-export function insertProcessedPdf(
+export async function insertProcessedPdf(
   processed: ProcessedKnowledgeBasePdf
-): KnowledgeBaseEntry {
+): Promise<KnowledgeBaseEntry> {
   return createKnowledgeBaseEntry({
     grade: processed.grade,
     subject: processed.subject,

@@ -109,7 +109,7 @@ async function main(): Promise<void> {
   for (const filePath of pdfFiles) {
     const filename = path.basename(filePath);
 
-    const existing = findKnowledgeBaseEntryByFilename(filename);
+    const existing = await findKnowledgeBaseEntryByFilename(filename);
     if (existing) {
       rows.push({
         filename,
@@ -126,7 +126,7 @@ async function main(): Promise<void> {
     try {
       const buffer = fs.readFileSync(filePath);
       const processed = await processPdfForKnowledgeBase(buffer, filename);
-      insertProcessedPdf(processed);
+      await insertProcessedPdf(processed);
 
       rows.push({
         filename: processed.filename,

@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const entry = getKnowledgeBaseEntry(Number(chapterId));
+    const entry = await getKnowledgeBaseEntry(Number(chapterId));
     if (!entry) {
       return NextResponse.json(
         { error: "Chapter not found in knowledge base." },

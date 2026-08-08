@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
-  insertProcessedPdf,
   processPdfForKnowledgeBase,
 } from "@/lib/knowledge-base-import";
 import {
@@ -16,31 +15,41 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const id = Number(params.id);
-  if (!id) {
-    return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+  try {
+    const id = Number(params.id);
+    if (!id) {
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    }
+
+    const entry = await getKnowledgeBaseEntry(id);
+    if (!entry) {
+      return NextResponse.json({ error: "Chapter not found" }, { status: 404 });
+    }
+
+    console.log(
+      `[LessonPlanner] Retrieved chapter from knowledge base: id=${entry.id}, grade=${entry.grade}, subject=${entry.subject}, chapter=${entry.chapter}, filename=${entry.filename}`
+    );
+
+    return NextResponse.json({
+      id: entry.id,
+      grade: entry.grade,
+      subject: entry.subject,
+      chapter: entry.chapter,
+      filename: entry.filename,
+      structure_json: entry.structure_json,
+      updated_at: entry.updated_at,
+      charCount: entry.raw_text?.length ?? 0,
+      textPreview: (entry.raw_text ?? "").slice(0, 800),
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to load chapter",
+      },
+      { status: 500 }
+    );
   }
-
-  const entry = getKnowledgeBaseEntry(id);
-  if (!entry) {
-    return NextResponse.json({ error: "Chapter not found" }, { status: 404 });
-  }
-
-  console.log(
-    `[LessonPlanner] Retrieved chapter from knowledge base: id=${entry.id}, grade=${entry.grade}, subject=${entry.subject}, chapter=${entry.chapter}, filename=${entry.filename}`
-  );
-
-  return NextResponse.json({
-    id: entry.id,
-    grade: entry.grade,
-    subject: entry.subject,
-    chapter: entry.chapter,
-    filename: entry.filename,
-    structure_json: entry.structure_json,
-    updated_at: entry.updated_at,
-    charCount: entry.raw_text?.length ?? 0,
-    textPreview: (entry.raw_text ?? "").slice(0, 800),
-  });
 }
 
 export async function PUT(
@@ -49,7 +58,7 @@ export async function PUT(
 ) {
   try {
     const id = Number(params.id);
-    const existing = getKnowledgeBaseEntry(id);
+    const existing = await getKnowledgeBaseEntry(id);
     if (!existing) {
       return NextResponse.json({ error: "Entry not found" }, { status: 404 });
     }
@@ -58,7 +67,10 @@ export async function PUT(
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
-      return NextResponse.json({ error: "No PDF file provided" }, { status: 400 });
+      return NextResponse.json(
+        { error: "No PDF file provided" },
+        { status: 400 }
+      );
     }
 
     if (!file.name.toLowerCase().endsWith(".pdf")) {
@@ -89,7 +101,7 @@ export async function PUT(
 
     if (chapter) processed.structure_json.topic = chapter;
 
-    const entry = replaceKnowledgeBaseEntry(id, {
+    const entry = await replaceKnowledgeBaseEntry(id, {
       grade,
       subject,
       chapter,

@@ -16,9 +16,8 @@ import {
 import { resolveChapterTitle } from "../lib/grounding";
 import type { GenerateFromKbInput } from "../lib/types/knowledge-base";
 
-// Fix known bad metadata before testing
-function fixFootprintsMetadata() {
-  const entry = getKnowledgeBaseEntry(10);
+async function fixFootprintsMetadata() {
+  const entry = await getKnowledgeBaseEntry(10);
   if (!entry) return;
   if (/delhi public school/i.test(entry.chapter)) {
     const fixed = resolveChapterTitle(
@@ -26,13 +25,13 @@ function fixFootprintsMetadata() {
       entry.raw_text,
       entry.filename
     );
-    updateKnowledgeBaseEntry(10, { chapter: fixed });
+    await updateKnowledgeBaseEntry(10, { chapter: fixed });
     console.log(`[fix] Fixed chapter id=10 title → "${fixed}"`);
   }
 }
 
 async function runForId(id: number) {
-  const entry = getKnowledgeBaseEntry(id);
+  const entry = await getKnowledgeBaseEntry(id);
   if (!entry) {
     console.error(`No entry id=${id}`);
     return;
@@ -67,7 +66,7 @@ async function runForId(id: number) {
 }
 
 async function main() {
-  fixFootprintsMetadata();
+  await fixFootprintsMetadata();
 
   const args = process.argv
     .slice(2)
@@ -76,20 +75,23 @@ async function main() {
 
   let ids = args;
   if (!ids.length) {
-    const footprints = listKnowledgeBaseEntries().filter(
+    const footprints = (await listKnowledgeBaseEntries()).filter(
       (e) =>
         /footprints/i.test(e.chapter) || /footprints/i.test(e.filename)
     );
-    const triumph = listKnowledgeBaseEntries().filter(
-      (e) => /triumph|surgery/i.test(e.chapter) || /triumph|surgery/i.test(e.filename)
+    const triumph = (await listKnowledgeBaseEntries()).filter(
+      (e) =>
+        /triumph|surgery/i.test(e.chapter) ||
+        /triumph|surgery/i.test(e.filename)
     );
-    const anne = listKnowledgeBaseEntries().filter(
-      (e) => /anne|frank|diary/i.test(e.chapter) || /anne|frank/i.test(e.filename)
+    const anne = (await listKnowledgeBaseEntries()).filter(
+      (e) =>
+        /anne|frank|diary/i.test(e.chapter) || /anne|frank/i.test(e.filename)
     );
     ids = [...anne, ...footprints, ...triumph].map((e) => e.id).slice(0, 2);
     if (!ids.length) {
       console.log("No matching chapters. Available:");
-      for (const e of listKnowledgeBaseEntries()) {
+      for (const e of await listKnowledgeBaseEntries()) {
         console.log(`  id=${e.id}  ${e.chapter}  (${e.filename})`);
       }
       process.exit(1);
@@ -101,9 +103,7 @@ async function main() {
     }
   }
 
-  for (const id of ids) {
-    await runForId(id);
-  }
+  for (const id of ids) await runForId(id);
 }
 
 main().catch((err) => {

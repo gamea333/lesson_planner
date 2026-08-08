@@ -4,19 +4,23 @@
  * Optional: npx tsx scripts/debug-specificity.ts 10 5
  */
 import { debugBuildLessonPlanPayload } from "../lib/groq";
-import { listKnowledgeBaseEntries, getKnowledgeBaseEntry } from "../lib/knowledge-base-store";
+import {
+  listKnowledgeBaseEntries,
+  getKnowledgeBaseEntry,
+} from "../lib/knowledge-base-store";
 import type { GenerateFromKbInput } from "../lib/types/knowledge-base";
 
-function findChapters(query: string) {
-  return listKnowledgeBaseEntries().filter(
+async function findChapters(query: string) {
+  const entries = await listKnowledgeBaseEntries();
+  return entries.filter(
     (e) =>
       e.chapter.toLowerCase().includes(query.toLowerCase()) ||
       e.filename.toLowerCase().includes(query.toLowerCase())
   );
 }
 
-function runForId(id: number, days = "1") {
-  const entry = getKnowledgeBaseEntry(id);
+async function runForId(id: number, days = "1") {
+  const entry = await getKnowledgeBaseEntry(id);
   if (!entry) {
     console.error(`No entry id=${id}`);
     return;
@@ -35,17 +39,16 @@ function runForId(id: number, days = "1") {
     source: "knowledge_base",
   };
 
-  console.log(`\n######## DEBUG CHAPTER id=${id} "${entry.chapter}" (${entry.filename}) ########`);
+  console.log(
+    `\n######## DEBUG CHAPTER id=${id} "${entry.chapter}" (${entry.filename}) ########`
+  );
   const built = debugBuildLessonPlanPayload(entry, input);
   console.log(`Specificity terms: ${built.specificityTerms.join(", ")}`);
-  console.log(
-    `Pack: included=${built.packStats.included.join(" | ")}`
-  );
+  console.log(`Pack: included=${built.packStats.included.join(" | ")}`);
   console.log(
     `Pack stats: truncated=[${built.packStats.truncated.join(", ")}] dropped=[${built.packStats.dropped.join(", ")}] userTokens≈${built.packStats.userTokens}`
   );
 
-  // Sanity: do critical names appear in the user prompt?
   const userLower = built.userPrompt.toLowerCase();
   const hits = built.specificityTerms.filter((t) =>
     userLower.includes(t.toLowerCase())
@@ -55,23 +58,34 @@ function runForId(id: number, days = "1") {
   );
 }
 
-const args = process.argv.slice(2).map(Number).filter((n) => Number.isFinite(n));
+async function main() {
+  const args = process.argv
+    .slice(2)
+    .map(Number)
+    .filter((n) => Number.isFinite(n));
 
-if (args.length) {
-  for (const id of args) runForId(id);
-} else {
-  const footprints = findChapters("footprints");
-  const triumph = findChapters("triumph");
-  const anne = findChapters("anne");
+  if (args.length) {
+    for (const id of args) await runForId(id);
+    return;
+  }
+
+  const footprints = await findChapters("footprints");
+  const triumph = await findChapters("triumph");
+  const anne = await findChapters("anne");
   const targets = [...anne, ...footprints, ...triumph].slice(0, 3);
 
   if (!targets.length) {
     console.log("No matching chapters. Available:");
-    for (const e of listKnowledgeBaseEntries()) {
+    for (const e of await listKnowledgeBaseEntries()) {
       console.log(`  id=${e.id}  ${e.chapter}  (${e.filename})`);
     }
-    process.exit(0);
+    return;
   }
 
-  for (const e of targets) runForId(e.id);
+  for (const e of targets) await runForId(e.id);
 }
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
